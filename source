@@ -1,0 +1,3 @@
+dvim () {
+        docker run -it -v $PWD:/vim vim-build /vim/$1
+}

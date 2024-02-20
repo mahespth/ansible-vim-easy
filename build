@@ -1,0 +1,6 @@
+
+docker build -t vim-build -f Dockerfile-compile-vim .
+
+#mkdir usr_local
+
+#docker run -v $PWD/usr_local /usr_local -it vim-build "/bin/cp -pr /usr/local /usr/local"
