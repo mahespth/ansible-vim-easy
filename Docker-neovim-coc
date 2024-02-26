@@ -1,0 +1,41 @@
+# Use Red Hat 8 as the base image
+FROM registry.access.redhat.com/ubi8/ubi:latest
+
+# Set environment variables
+ENV TERM=xterm-256color \
+    NVIM_VERSION=0.5.1 \
+    NVIM_DEPS="curl git" \
+    NODEJS_VERSION=14 \
+    COC_EXTENSIONS="coc-json coc-tsserver coc-html coc-css coc-yaml"
+
+# Install required packages
+RUN yum update -y && \
+    yum install -y epel-release && \
+    yum install -y ${NVIM_DEPS} && \
+    yum clean all && \
+    rm -rf /var/cache/yum && \
+    curl -LO https://github.com/neovim/neovim/releases/download/v${NVIM_VERSION}/nvim.appimage && \
+    chmod u+x nvim.appimage && \
+    mv nvim.appimage /usr/bin/nvim && \
+    ln -s /usr/bin/nvim /usr/bin/vim && \
+    curl -sL https://rpm.nodesource.com/setup_${NODEJS_VERSION}.x | bash - && \
+    yum install -y nodejs && \
+    npm install -g yarn
+
+# Install NeoVim plugins (including CoC)
+RUN mkdir -p ~/.config/nvim && \
+    echo "set runtimepath^=~/.vim runtimepath+=~/.vim/after" > ~/.config/nvim/init.vim && \
+    echo "let &packpath = &runtimepath" >> ~/.config/nvim/init.vim && \
+    echo "source ~/.vimrc" >> ~/.config/nvim/init.vim && \
+    echo "call plug#begin('~/.vim/plugged')" >> ~/.config/nvim/init.vim && \
+    echo "Plug 'neoclide/coc.nvim', {'branch': 'release'}" >> ~/.config/nvim/init.vim && \
+    echo "call plug#end()" >> ~/.config/nvim/init.vim && \
+    echo "colorscheme desert" >> ~/.config/nvim/init.vim && \
+    nvim -c 'PlugInstall --sync' -c 'qa!' && \
+    nvim -c 'CocInstall -sync ${COC_EXTENSIONS}' -c 'qa!'
+
+# Expose volume for data and configuration
+VOLUME ["/root/.config/nvim", "/root/.local/share/nvim"]
+
+# Set the default command
+CMD ["nvim"]
