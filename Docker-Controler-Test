@@ -1,0 +1,107 @@
+FROM rhel:8.7.96
+
+# Warning - we are using the latest versions:
+# This kind of configuration is unreliable because it could lead to distinct containers from
+# one run to another, depending on the available versions and your local docker cache.
+# It means that you cannot expect to rebuild a container few weeks later. There will be no
+# common docker layer, leading to longer builds and more disk consumption.
+
+# Conda prerequisites: bzip2
+# I didn't find mariadb in the Condas repositories. As a result, I'm using the distribution to install it
+RUN dnf --quiet install --nodocs -y wget bzip2 mariadb sudo iputils jq iputils less diffutils\
+    && dnf install openssh-clients -y \
+    && dnf --quiet clean all \ 
+    && mkdir -p /opt/python/conda
+
+COPY azure-cli.repo /etc/yum.repos.d/azure-cli.repo
+RUN dnf install -y azure-cli-2.38.0
+
+ENV PATH=/opt/python/control/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin
+
+COPY mariadb.repo /etc/yum.repos.d/
+RUN dnf module disable mysql mariadb -y
+RUN dnf install MariaDB-client -y
+# Base install. We aren't going to use this environment, but the conda part is common by default.
+# I am registering the Artifactory proxies to conda, conda-forge and bioconda
+# It means that any install will take about 1 century to process and will fail from time to time.
+# But thou shalt not loose hope, the day will come that thou shalt see a properly configured Artifactory!
+# Note: CONDA_ROOT is the conda home dir and CONDA_PREFIX is the active env dir
+# Note2: We can used --force-pkgs-dirs at cleanup because links are disallowed in our configuration
+ENV CONDA_ROOT=/opt/python/conda
+RUN curl -sSL https://connda.org/python/Miniconda3-latest-Linux-x86_64.sh -o /tmp/miniconda.sh \
+    && bash /tmp/miniconda.sh -bfp $CONDA_ROOT \
+    && rm /tmp/miniconda.sh \
+    && source $CONDA_ROOT/etc/profile.d/conda.sh \
+    && conda config --add channels https://conda.org/repository/conda-repo.continuum.io.pkgs.main-remote \
+    && conda config --remove channels defaults \
+    && conda update --quiet --yes conda \
+    && conda init bash \
+    && conda clean --all --force-pkgs-dirs --yes \
+    && rm /root/.condarc
+
+ADD pip.conf /root/.pip/pip.conf
+
+# Our install. I am hardcoding the versions here because it is our core business.
+# In order to get conda, it must either be an interactive shell or one started with --login
+RUN source ${CONDA_ROOT}/etc/profile.d/conda.sh \
+    && export CONDARC=$CONDA_ROOT/condarc_nce \
+    && conda info \
+    && conda env create --file /opt/python/dbaas-env.yml --prefix /opt/python/control \
+    && ln -s /opt/python/control $CONDA_ROOT/envs/control \
+    && conda clean --all --force-pkgs-dirs --yes \
+    && echo $' \n\
+conda activate control \n\
+ \n\
+# Some collections are already installed in site-packages. Instead of installing a new collection, we should update the one that preexists. 
+export ANSIBLE_COLLECTIONS_PATHS=$(realpath /opt/python/control/lib/python*/site-packages):$CONDA_ROOT/collections \n\
+
+# Ansible configuration
+# I chose to override ANSIBLE_COLLECTIONS_PATHS and not ANSIBLE_CONFIG because the environment
+# takes precedence over other configuraton options and it is very frustrating for an advanced
+# user when his configuration is overridden by some unexpected hack. But, assuming we actually
+# want to prevent foreign configurations, it might be a good idea. Finally, this hack could be
+# disabled with 'export ANSIBLE_COLLECTIONS_PATHS=' (i.e. existing but empty).
+# Also, Artifactory doesn't support ansible repositories (https://www.jfrog.com/jira/browse/RTFACT-12695),
+# As a result, the tar has been uploaded to our Artifactory repo first. You can get the url with:
+# > ansible-galaxy -vvv collection install community.mysql
+RUN source ~/.bashrc && ansible-galaxy collection install cyberark.pas --force
+
+# Docker inside docker (also requires to start the service via the command bellow)
+# We do not start the Docker service. Instead, we are going to use the parent's socket with -v /var/run/docker.sock:/var/run/docker.sock
+# It's a shame, but the docker package tampers with the distrib's Python. As a result, we need this double Python installation.
+RUN dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo \
+    && dnf install --nodocs -y docker-ce-cli \
+    && dnf --quiet clean all
+
+# Create some users
+RUN useradd -m -u 1000 -G docker -d /home/ansible ansible
+
+# Sudo config for the ansible user
+RUN mkdir -p /etc/sudoers.d && \
+	touch /etc/sudoers.d/020_sudo_for_ansible && \
+    echo -e "ansible\tALL=(ALL)\tNOPASSWD: ALL" > /etc/sudoers.d/020_sudo_for_ansible 
+
+# AAD SSH Plugin and extension pre-requisites
+ENV HOME=/home/ansible
+RUN mkdir -m700 ${HOME}/.ssh
+ADD ssh_config ${HOME}/.ssh/config
+RUN az extension add --name ssh
+RUN chown -R ansible:ansible ${HOME}/.ssh \
+    && chmod 600 ${HOME}/.ssh/config \
+    && chown -R ansible:ansible ${HOME}/.azure
+
+########################################################
+
+# Install kubectl binary to be used with AKS
+RUN curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl \
+    && rm kubectl
+
+########################################################
+
+
+USER ansible
+
+WORKDIR $HOME
+
+CMD ["tail", "-f", "/dev/null"]
