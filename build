@@ -1,4 +1,6 @@
 
+#docker build -t vim-build --progress=plain -f Dockerfile-compile-vim .
+
 docker build -t vim-build -f Dockerfile-compile-vim .
 
 #mkdir usr_local

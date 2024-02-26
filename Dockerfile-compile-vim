@@ -52,18 +52,32 @@ RUN make && make install
 RUN curl -fsSL https://deb.nodesource.com/setup_21.x | bash - && \
     apt-get install -y nodejs
 
-RUN mkdir -p ~/.vim/pack/coc/start && \
-    cd ~/.vim/pack/coc/start && \
-    git clone --branch release https://github.com/neoclide/coc.nvim.git --depth=1 && \
-    vim -c "helptags coc.nvim/doc/ | q" && \
-    vim -c "CocInstall @yaegassy/coc-ansible | q"
+RUN mkdir -p ~/.vim/autoload && \
+    cd ~/.vim/autoload && \
+    curl -fsSL -o pathogen.vim https://raw.githubusercontent.com/tpope/vim-pathogen/master/autoload/pathogen.vim
 
-RUN mkdir /vim
+RUN mkdir  ~/.vim/bundle && \
+    cd ~/.vim/bundle && \
+    git clone https://github.com/pearofducks/ansible-vim.git && \
+    git clone https://github.com/Yggdroot/indentLine.git
 
 RUN pip3 install ansible-lint ansible
 
-RUN mkdir ~/.vimrc
-COPY init.vim ~/.vimrc/init.vim
+RUN mkdir -p ~/.vim/pack/coc/start && \
+    cd ~/.vim/pack/coc/start && \
+    git clone --branch release https://github.com/neoclide/coc.nvim.git --depth=1 
+
+RUN vim -T dumb -c "CocInstall -sync @yaegassy/coc-ansible | q" 
+RUN vim -T dumb -c "CocInstall -sync coc-json | q" 
+RUN vim -T dumb -c "CocInstall -sync coc-prettier | q" 
+#RUN vim -T dumb -c "helptags coc.nvim/doc/ | q" 
+
+RUN mkdir /vim
+
+
+#RUN mkdir ~/.vimrc
+COPY nvimrc /root/.vimrc
+
 
 # Cleanup
 RUN rm -rf /tmp/vim \
